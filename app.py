@@ -47,6 +47,13 @@ MARKET_CHOICES: List[Tuple[str, str]] = [
 ]
 
 
+def to_float(raw: str, default: float = 0.0) -> float:
+    try:
+        return float((raw or "").strip())
+    except (TypeError, ValueError):
+        return default
+
+
 def run_cmd(args: List[str]) -> tuple[int, str]:
     proc = subprocess.run(
         [PY] + args,
@@ -89,6 +96,47 @@ def bets_stats() -> Dict[str, int]:
             else:
                 stats["pending"] += 1
     return stats
+
+
+def load_played_picks(date_filter: str = "all", profile_filter: str = "") -> List[Dict[str, str]]:
+    path = os.path.join(BASE_DIR, BETS_CSV)
+    if not os.path.exists(path):
+        return []
+    out: List[Dict[str, str]] = []
+    with open(path, newline="", encoding="utf-8") as f:
+        for row in csv.DictReader(f):
+            settled = (row.get("settled") or "").strip().lower() in {"1", "true", "yes", "y"}
+            if not settled:
+                continue
+            if date_filter != "all" and (row.get("date") or "").strip() != date_filter.strip():
+                continue
+            if profile_filter and (row.get("profile") or "").strip() != profile_filter.strip():
+                continue
+            result = (row.get("result") or "").strip().lower()
+            if result not in {"win", "loss", "lost", "won", "push"}:
+                pnl = to_float(row.get("pnl_units", "0"))
+                if pnl > 0:
+                    result = "win"
+                elif pnl < 0:
+                    result = "loss"
+                else:
+                    result = "push"
+            out.append(
+                {
+                    "Date": (row.get("date") or "").strip(),
+                    "League": (row.get("league") or "").strip(),
+                    "Fixture": (row.get("fixture") or "").strip(),
+                    "Market": (row.get("market") or "").strip(),
+                    "Result": result.upper(),
+                    "Book": f"{to_float(row.get('book_odds', '0')):.2f}",
+                    "StakeU": f"{to_float(row.get('stake_units', '0')):.2f}",
+                    "PnL U": f"{to_float(row.get('pnl_units', '0')):+.2f}",
+                    "Edge": f"{to_float(row.get('edge_pct', '0')):.1f}%",
+                    "Confidence": f"{to_float(row.get('confidence_pct', '0')):.1f}%",
+                    "Profile": (row.get("profile") or "").strip(),
+                }
+            )
+    return out
 
 
 def parse_scan_summary(output: str) -> Tuple[int, int]:
@@ -541,6 +589,44 @@ with tab_results:
                 st.success("Report complete")
             else:
                 st.error("Report failed")
+
+    st.markdown("---")
+    st.subheader("Played Picks (Won/Lost)")
+    pp1, pp2, pp3 = st.columns(3)
+    with pp1:
+        played_date = st.text_input("Played Date Filter", value="all", key="played_date_filter")
+    with pp2:
+        played_profile = st.selectbox("Played Profile Filter", ["all", "manual", "pro_live"], index=0, key="played_profile_filter")
+    with pp3:
+        if st.button("Refresh Played Picks", use_container_width=True):
+            st.rerun()
+
+    profile_filter = "" if played_profile == "all" else played_profile
+    played_rows = load_played_picks(date_filter=played_date, profile_filter=profile_filter)
+    if not played_rows:
+        st.info("No settled picks found yet for this filter. Run settlement first, then refresh.")
+    else:
+        wins = sum(1 for r in played_rows if r["Result"] == "WIN")
+        losses = sum(1 for r in played_rows if r["Result"] == "LOSS")
+        pushes = sum(1 for r in played_rows if r["Result"] == "PUSH")
+        pnl = sum(to_float(r["PnL U"]) for r in played_rows)
+        risked = sum(max(0.0, to_float(r["StakeU"])) for r in played_rows)
+        roi = (pnl / risked * 100.0) if risked > 0 else 0.0
+        s1, s2, s3, s4, s5 = st.columns(5)
+        s1.metric("Settled Picks", len(played_rows))
+        s2.metric("Wins", wins)
+        s3.metric("Losses", losses)
+        s4.metric("Pushes", pushes)
+        s5.metric("ROI", f"{roi:+.2f}%")
+
+        if pd is not None:
+            df = pd.DataFrame(played_rows)
+            df["_date"] = pd.to_datetime(df["Date"], errors="coerce")
+            df["_pnl"] = pd.to_numeric(df["PnL U"].str.replace("+", "", regex=False), errors="coerce")
+            df = df.sort_values(["_date", "_pnl"], ascending=[False, False]).drop(columns=["_date", "_pnl"])
+            st.dataframe(df, use_container_width=True, hide_index=True)
+        else:
+            st.dataframe(played_rows, use_container_width=True, hide_index=True)
 
 with tab_logs:
     st.subheader("Files and Help")
