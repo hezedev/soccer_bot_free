@@ -1,0 +1,7 @@
+.venv/
+__pycache__/
+reports/
+*.pyc
+.DS_Store
+bets_log.csv
+upcoming_odds.csv
