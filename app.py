@@ -5,7 +5,7 @@ import os
 import re
 import subprocess
 import sys
-from datetime import date
+from datetime import date, timedelta
 from typing import Dict, List, Tuple
 
 import streamlit as st
@@ -52,6 +52,19 @@ def to_float(raw: str, default: float = 0.0) -> float:
         return float((raw or "").strip())
     except (TypeError, ValueError):
         return default
+
+
+def date_from_choice(choice: str, custom_val: date, allow_all: bool = False) -> str:
+    c = (choice or "").strip().lower()
+    if allow_all and c == "all":
+        return "all"
+    if c == "today":
+        return "today"
+    if c == "tomorrow":
+        return "tomorrow"
+    if c == "yesterday":
+        return "yesterday"
+    return custom_val.isoformat()
 
 
 def run_cmd(args: List[str]) -> tuple[int, str]:
@@ -309,6 +322,22 @@ if "scan_date" not in st.session_state:
     st.session_state.scan_date = "today"
 if "log_picks" not in st.session_state:
     st.session_state.log_picks = True
+if "scan_date_mode" not in st.session_state:
+    st.session_state.scan_date_mode = "Today"
+if "scan_date_custom" not in st.session_state:
+    st.session_state.scan_date_custom = date.today()
+if "settle_date_mode" not in st.session_state:
+    st.session_state.settle_date_mode = "Yesterday"
+if "settle_date_custom" not in st.session_state:
+    st.session_state.settle_date_custom = date.today() - timedelta(days=1)
+if "report_date_mode" not in st.session_state:
+    st.session_state.report_date_mode = "All"
+if "report_date_custom" not in st.session_state:
+    st.session_state.report_date_custom = date.today()
+if "played_date_mode" not in st.session_state:
+    st.session_state.played_date_mode = "All"
+if "played_date_custom" not in st.session_state:
+    st.session_state.played_date_custom = date.today()
 if "last_scan_output" not in st.session_state:
     st.session_state.last_scan_output = ""
 if "last_scan_cmd" not in st.session_state:
@@ -337,7 +366,8 @@ with st.sidebar:
             st.session_state.one_pick_per_match = True
             st.session_state.shortlist_market_cap = 3
             st.session_state.max_picks = 10
-            st.session_state.scan_date = "today"
+            st.session_state.scan_date_mode = "Today"
+            st.session_state.scan_date_custom = date.today()
             st.session_state.log_picks = True
         elif preset == "Balanced":
             st.session_state.mode = "balanced"
@@ -351,7 +381,8 @@ with st.sidebar:
             st.session_state.one_pick_per_match = True
             st.session_state.shortlist_market_cap = 3
             st.session_state.max_picks = 10
-            st.session_state.scan_date = "today"
+            st.session_state.scan_date_mode = "Today"
+            st.session_state.scan_date_custom = date.today()
             st.session_state.log_picks = True
         elif preset == "Conservative":
             st.session_state.mode = "safe"
@@ -365,11 +396,14 @@ with st.sidebar:
             st.session_state.one_pick_per_match = True
             st.session_state.shortlist_market_cap = 3
             st.session_state.max_picks = 10
-            st.session_state.scan_date = "today"
+            st.session_state.scan_date_mode = "Today"
+            st.session_state.scan_date_custom = date.today()
             st.session_state.log_picks = True
         st.rerun()
     season_code = st.text_input("Season Code", value="2526")
-    scan_date = st.text_input("Scan Date", key="scan_date", help="today, tomorrow, or YYYY-MM-DD")
+    scan_date_mode = st.selectbox("Scan Date", ["Today", "Tomorrow", "Custom date"], key="scan_date_mode")
+    scan_date_custom = st.date_input("Scan Date (custom)", key="scan_date_custom", disabled=scan_date_mode != "Custom date")
+    scan_date = date_from_choice(scan_date_mode, scan_date_custom)
     mode = st.selectbox("Mode", ["safe", "balanced", "aggressive"], key="mode")
     min_edge = st.number_input("Min Edge %", step=0.1, key="min_edge")
     max_picks = st.number_input("Max Picks", min_value=0, step=1, key="max_picks")
@@ -530,9 +564,13 @@ with tab_results:
     st.subheader("Settle and Evaluate")
     r1, r2, r3 = st.columns(3)
     with r1:
-        settle_date = st.text_input("Settle Up To", value="yesterday", key="settle_date")
+        settle_mode = st.selectbox("Settle Up To", ["Yesterday", "Today", "Custom date"], key="settle_date_mode")
+        settle_custom = st.date_input("Settle Date (custom)", key="settle_date_custom", disabled=settle_mode != "Custom date")
+        settle_date = date_from_choice(settle_mode, settle_custom)
     with r2:
-        report_date = st.text_input("Results Date Filter", value="all", key="report_date")
+        report_mode = st.selectbox("Results Date Filter", ["All", "Today", "Yesterday", "Custom date"], key="report_date_mode")
+        report_custom = st.date_input("Results Date (custom)", key="report_date_custom", disabled=report_mode != "Custom date")
+        report_date = date_from_choice(report_mode, report_custom, allow_all=True)
     with r3:
         report_limit = st.number_input("Report Limit", min_value=1, value=50, step=1, key="report_limit")
 
@@ -594,7 +632,9 @@ with tab_results:
     st.subheader("Played Picks (Won/Lost)")
     pp1, pp2, pp3 = st.columns(3)
     with pp1:
-        played_date = st.text_input("Played Date Filter", value="all", key="played_date_filter")
+        played_mode = st.selectbox("Played Date Filter", ["All", "Today", "Yesterday", "Custom date"], key="played_date_mode")
+        played_custom = st.date_input("Played Date (custom)", key="played_date_custom", disabled=played_mode != "Custom date")
+        played_date = date_from_choice(played_mode, played_custom, allow_all=True)
     with pp2:
         played_profile = st.selectbox("Played Profile Filter", ["all", "manual", "pro_live"], index=0, key="played_profile_filter")
     with pp3:
