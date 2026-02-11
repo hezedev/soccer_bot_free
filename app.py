@@ -152,6 +152,82 @@ def load_played_picks(date_filter: str = "all", profile_filter: str = "") -> Lis
     return out
 
 
+def load_parlay_results(date_filter: str = "all", profile_filter: str = "") -> List[Dict[str, str]]:
+    path = os.path.join(BASE_DIR, BETS_CSV)
+    if not os.path.exists(path):
+        return []
+
+    groups: Dict[Tuple[str, str, str], List[Dict[str, str]]] = {}
+    with open(path, newline="", encoding="utf-8") as f:
+        for row in csv.DictReader(f):
+            logged_at = (row.get("logged_at") or "").strip()
+            bet_date = (row.get("date") or "").strip()
+            profile = (row.get("profile") or "").strip()
+            if not logged_at or not bet_date:
+                continue
+            if date_filter != "all" and bet_date != date_filter.strip():
+                continue
+            if profile_filter and profile != profile_filter.strip():
+                continue
+            key = (logged_at, bet_date, profile)
+            groups.setdefault(key, []).append(row)
+
+    out: List[Dict[str, str]] = []
+    for (logged_at, bet_date, profile), legs in groups.items():
+        # Parlay ticket definition: 2+ picks logged in one run.
+        if len(legs) < 2:
+            continue
+        wins = 0
+        losses = 0
+        pushes = 0
+        pending = 0
+        combined_odds = 1.0
+        for r in legs:
+            settled = (r.get("settled") or "").strip().lower() in {"1", "true", "yes", "y"}
+            if not settled:
+                pending += 1
+                continue
+            result = (r.get("result") or "").strip().lower()
+            if result in {"win", "won", "w"}:
+                wins += 1
+                combined_odds *= max(1.0, to_float(r.get("book_odds", "1")))
+            elif result in {"loss", "lost", "l"}:
+                losses += 1
+            else:
+                # push/void leg -> multiplier 1.0
+                pushes += 1
+
+        if losses > 0:
+            status = "LOST"
+            pnl_u = -1.0
+        elif pending > 0:
+            status = "PENDING"
+            pnl_u = 0.0
+        elif wins > 0:
+            status = "WON"
+            pnl_u = combined_odds - 1.0
+        else:
+            status = "PUSH"
+            pnl_u = 0.0
+
+        out.append(
+            {
+                "Date": bet_date,
+                "Logged At": logged_at,
+                "Profile": profile or "manual",
+                "Legs": str(len(legs)),
+                "Wins": str(wins),
+                "Losses": str(losses),
+                "Pushes": str(pushes),
+                "Pending": str(pending),
+                "Parlay Odds": f"{combined_odds:.2f}" if status == "WON" else "-",
+                "Parlay Result": status,
+                "Parlay PnL U (1u)": f"{pnl_u:+.2f}",
+            }
+        )
+    return out
+
+
 def parse_scan_summary(output: str) -> Tuple[int, int]:
     # Returns (all_qualifying_estimate, shortlist_count)
     shortlist = 0
@@ -667,6 +743,40 @@ with tab_results:
             st.dataframe(df, use_container_width=True, hide_index=True)
         else:
             st.dataframe(played_rows, use_container_width=True, hide_index=True)
+
+    st.markdown("---")
+    st.subheader("Parlay Picks Result Check")
+    pr1, pr2 = st.columns(2)
+    with pr1:
+        if st.button("Check Parlay Results", use_container_width=True, type="primary"):
+            st.session_state["show_parlay_results"] = True
+    with pr2:
+        if st.button("Clear Parlay Results", use_container_width=True):
+            st.session_state["show_parlay_results"] = False
+
+    if st.session_state.get("show_parlay_results", False):
+        parlay_rows = load_parlay_results(date_filter=played_date, profile_filter=profile_filter)
+        if not parlay_rows:
+            st.info("No parlay tickets found (needs 2+ picks logged in one scan run).")
+        else:
+            won_t = sum(1 for r in parlay_rows if r["Parlay Result"] == "WON")
+            lost_t = sum(1 for r in parlay_rows if r["Parlay Result"] == "LOST")
+            push_t = sum(1 for r in parlay_rows if r["Parlay Result"] == "PUSH")
+            pending_t = sum(1 for r in parlay_rows if r["Parlay Result"] == "PENDING")
+            pnl_t = sum(to_float(r["Parlay PnL U (1u)"]) for r in parlay_rows if r["Parlay Result"] != "PENDING")
+            m1, m2, m3, m4, m5 = st.columns(5)
+            m1.metric("Parlay Tickets", len(parlay_rows))
+            m2.metric("Won", won_t)
+            m3.metric("Lost", lost_t)
+            m4.metric("Pending", pending_t)
+            m5.metric("PnL U (1u)", f"{pnl_t:+.2f}")
+            if pd is not None:
+                dfp = pd.DataFrame(parlay_rows)
+                dfp["_date"] = pd.to_datetime(dfp["Date"], errors="coerce")
+                dfp = dfp.sort_values(["_date", "Logged At"], ascending=[False, False]).drop(columns=["_date"])
+                st.dataframe(dfp, use_container_width=True, hide_index=True)
+            else:
+                st.dataframe(parlay_rows, use_container_width=True, hide_index=True)
 
 with tab_logs:
     st.subheader("Files and Help")
