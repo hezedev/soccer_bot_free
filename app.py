@@ -213,6 +213,7 @@ def load_parlay_results(date_filter: str = "all", profile_filter: str = "") -> L
         out.append(
             {
                 "Date": bet_date,
+                "Ticket ID": f"{logged_at} | {profile or 'manual'}",
                 "Logged At": logged_at,
                 "Profile": profile or "manual",
                 "Legs": str(len(legs)),
@@ -220,12 +221,60 @@ def load_parlay_results(date_filter: str = "all", profile_filter: str = "") -> L
                 "Losses": str(losses),
                 "Pushes": str(pushes),
                 "Pending": str(pending),
+                "Fixtures": ", ".join(sorted({(x.get("fixture") or "").strip() for x in legs})[:3])
+                + (" ..." if len({(x.get("fixture") or "").strip() for x in legs}) > 3 else ""),
                 "Parlay Odds": f"{combined_odds:.2f}" if status == "WON" else "-",
                 "Parlay Result": status,
                 "Parlay PnL U (1u)": f"{pnl_u:+.2f}",
             }
         )
     return out
+
+
+def load_parlay_leg_rows(date_filter: str = "all", profile_filter: str = "") -> List[Dict[str, str]]:
+    path = os.path.join(BASE_DIR, BETS_CSV)
+    if not os.path.exists(path):
+        return []
+
+    groups: Dict[Tuple[str, str, str], List[Dict[str, str]]] = {}
+    with open(path, newline="", encoding="utf-8") as f:
+        for row in csv.DictReader(f):
+            logged_at = (row.get("logged_at") or "").strip()
+            bet_date = (row.get("date") or "").strip()
+            profile = (row.get("profile") or "").strip()
+            if not logged_at or not bet_date:
+                continue
+            if date_filter != "all" and bet_date != date_filter.strip():
+                continue
+            if profile_filter and profile != profile_filter.strip():
+                continue
+            groups.setdefault((logged_at, bet_date, profile), []).append(row)
+
+    legs_out: List[Dict[str, str]] = []
+    for (logged_at, bet_date, profile), legs in groups.items():
+        if len(legs) < 2:
+            continue
+        ticket_id = f"{logged_at} | {profile or 'manual'}"
+        for r in legs:
+            settled = (r.get("settled") or "").strip().lower() in {"1", "true", "yes", "y"}
+            result = (r.get("result") or "").strip().upper() if settled else "PENDING"
+            if not result:
+                pnl = to_float(r.get("pnl_units", "0"))
+                result = "WIN" if pnl > 0 else ("LOSS" if pnl < 0 else "PUSH")
+            legs_out.append(
+                {
+                    "Ticket ID": ticket_id,
+                    "Date": bet_date,
+                    "League": (r.get("league") or "").strip(),
+                    "Fixture": (r.get("fixture") or "").strip(),
+                    "Market": (r.get("market") or "").strip(),
+                    "Book": f"{to_float(r.get('book_odds', '0')):.2f}",
+                    "Result": result,
+                    "Edge": f"{to_float(r.get('edge_pct', '0')):.1f}%",
+                    "Confidence": f"{to_float(r.get('confidence_pct', '0')):.1f}%",
+                }
+            )
+    return legs_out
 
 
 def parse_scan_summary(output: str) -> Tuple[int, int]:
@@ -756,6 +805,7 @@ with tab_results:
 
     if st.session_state.get("show_parlay_results", False):
         parlay_rows = load_parlay_results(date_filter=played_date, profile_filter=profile_filter)
+        parlay_leg_rows = load_parlay_leg_rows(date_filter=played_date, profile_filter=profile_filter)
         if not parlay_rows:
             st.info("No parlay tickets found (needs 2+ picks logged in one scan run).")
         else:
@@ -777,6 +827,16 @@ with tab_results:
                 st.dataframe(dfp, use_container_width=True, hide_index=True)
             else:
                 st.dataframe(parlay_rows, use_container_width=True, hide_index=True)
+
+            st.caption("Parlay Legs (teams and markets)")
+            if parlay_leg_rows:
+                if pd is not None:
+                    dfl = pd.DataFrame(parlay_leg_rows)
+                    dfl["_date"] = pd.to_datetime(dfl["Date"], errors="coerce")
+                    dfl = dfl.sort_values(["_date", "Ticket ID"], ascending=[False, False]).drop(columns=["_date"])
+                    st.dataframe(dfl, use_container_width=True, hide_index=True)
+                else:
+                    st.dataframe(parlay_leg_rows, use_container_width=True, hide_index=True)
 
 with tab_logs:
     st.subheader("Files and Help")
