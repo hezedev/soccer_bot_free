@@ -247,6 +247,20 @@ if "include_market_keys" not in st.session_state:
     st.session_state.include_market_keys = []
 if "exclude_market_keys" not in st.session_state:
     st.session_state.exclude_market_keys = []
+if "refresh_lookahead_days" not in st.session_state:
+    st.session_state.refresh_lookahead_days = 7
+if "auto_fill_margin" not in st.session_state:
+    st.session_state.auto_fill_margin = -8.0
+if "one_pick_per_match" not in st.session_state:
+    st.session_state.one_pick_per_match = True
+if "shortlist_market_cap" not in st.session_state:
+    st.session_state.shortlist_market_cap = 3
+if "max_picks" not in st.session_state:
+    st.session_state.max_picks = 10
+if "scan_date" not in st.session_state:
+    st.session_state.scan_date = "today"
+if "log_picks" not in st.session_state:
+    st.session_state.log_picks = True
 if "last_scan_output" not in st.session_state:
     st.session_state.last_scan_output = ""
 if "last_scan_cmd" not in st.session_state:
@@ -257,15 +271,40 @@ st.caption("Scanner + settlement control panel")
 
 with st.sidebar:
     st.subheader("Scan Settings")
-    preset = st.selectbox("Preset", ["Balanced", "Conservative", "Custom"], key="preset")
+    preset = st.selectbox(
+        "Preset",
+        ["DailyScan Morning (11 Feb style)", "Balanced", "Conservative", "Custom"],
+        key="preset",
+    )
     if st.button("Apply Preset", use_container_width=True):
-        if preset == "Balanced":
+        if preset == "DailyScan Morning (11 Feb style)":
+            st.session_state.mode = "aggressive"
+            st.session_state.min_edge = 8.0
+            st.session_state.odds_min = 0.0
+            st.session_state.odds_max = 0.0
+            st.session_state.include_market_keys = []
+            st.session_state.exclude_market_keys = []
+            st.session_state.refresh_lookahead_days = 7
+            st.session_state.auto_fill_margin = -8.0
+            st.session_state.one_pick_per_match = True
+            st.session_state.shortlist_market_cap = 3
+            st.session_state.max_picks = 10
+            st.session_state.scan_date = "today"
+            st.session_state.log_picks = True
+        elif preset == "Balanced":
             st.session_state.mode = "balanced"
             st.session_state.min_edge = 6.0
             st.session_state.odds_min = 1.8
             st.session_state.odds_max = 2.8
             st.session_state.include_market_keys = ["o25", "dnb", "home", "away", "btts_yes", "btts_no"]
             st.session_state.exclude_market_keys = ["co105", "ahc_h_m2_5", "ahc_a_p2_5"]
+            st.session_state.refresh_lookahead_days = 7
+            st.session_state.auto_fill_margin = -8.0
+            st.session_state.one_pick_per_match = True
+            st.session_state.shortlist_market_cap = 3
+            st.session_state.max_picks = 10
+            st.session_state.scan_date = "today"
+            st.session_state.log_picks = True
         elif preset == "Conservative":
             st.session_state.mode = "safe"
             st.session_state.min_edge = 8.0
@@ -273,15 +312,22 @@ with st.sidebar:
             st.session_state.odds_max = 2.4
             st.session_state.include_market_keys = ["o15", "o25", "dnb", "adnb", "u35", "cu95", "cu105"]
             st.session_state.exclude_market_keys = ["o35", "co105", "ahc_h_m2_5", "ahc_a_p2_5", "home", "away"]
+            st.session_state.refresh_lookahead_days = 7
+            st.session_state.auto_fill_margin = -8.0
+            st.session_state.one_pick_per_match = True
+            st.session_state.shortlist_market_cap = 3
+            st.session_state.max_picks = 10
+            st.session_state.scan_date = "today"
+            st.session_state.log_picks = True
         st.rerun()
     season_code = st.text_input("Season Code", value="2526")
-    scan_date = st.text_input("Scan Date", value="today", help="today, tomorrow, or YYYY-MM-DD")
+    scan_date = st.text_input("Scan Date", key="scan_date", help="today, tomorrow, or YYYY-MM-DD")
     mode = st.selectbox("Mode", ["safe", "balanced", "aggressive"], key="mode")
     min_edge = st.number_input("Min Edge %", step=0.1, key="min_edge")
-    max_picks = st.number_input("Max Picks", min_value=0, value=10, step=1)
-    one_pick_per_match = st.checkbox("One Pick Per Match", value=True)
-    shortlist_market_cap = st.number_input("Shortlist Market Cap", min_value=0, value=3, step=1)
-    log_picks = st.checkbox("Log Picks", value=True)
+    max_picks = st.number_input("Max Picks", min_value=0, step=1, key="max_picks")
+    one_pick_per_match = st.checkbox("One Pick Per Match", key="one_pick_per_match")
+    shortlist_market_cap = st.number_input("Shortlist Market Cap", min_value=0, step=1, key="shortlist_market_cap")
+    log_picks = st.checkbox("Log Picks", key="log_picks")
     bankroll = st.number_input("Bankroll", min_value=1.0, value=1000.0, step=10.0)
     profile = st.selectbox("Profile", ["none", "pro_live"], index=0)
 
@@ -302,8 +348,8 @@ with st.sidebar:
             format_func=lambda x: f"{x} - {dict(MARKET_CHOICES).get(x, x)}",
             key="exclude_market_keys",
         )
-        refresh_lookahead_days = st.number_input("Refresh Lookahead Days", min_value=0, value=7, step=1)
-        auto_fill_margin = st.number_input("Auto-fill Margin %", value=-8.0, step=0.5)
+        refresh_lookahead_days = st.number_input("Refresh Lookahead Days", min_value=0, step=1, key="refresh_lookahead_days")
+        auto_fill_margin = st.number_input("Auto-fill Margin %", step=0.5, key="auto_fill_margin")
 
 stats = bets_stats()
 odds_rows = odds_fixture_count()
