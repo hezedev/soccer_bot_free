@@ -9,12 +9,42 @@ from datetime import date
 from typing import Dict, List, Tuple
 
 import streamlit as st
+try:
+    import pandas as pd
+except ImportError:  # pragma: no cover
+    pd = None
 
 
 BASE_DIR = os.path.dirname(os.path.abspath(__file__))
 PY = sys.executable
 ODDS_CSV = "upcoming_odds.csv"
 BETS_CSV = "bets_log.csv"
+MARKET_CHOICES: List[Tuple[str, str]] = [
+    ("home", "Home (Winner)"),
+    ("away", "Away (Winner)"),
+    ("dnb", "Home (DNB)"),
+    ("adnb", "Away (DNB)"),
+    ("ah_h_m0_5", "AH Home -0.5"),
+    ("ah_a_p0_5", "AH Away +0.5"),
+    ("ah_h_m1_5", "AH Home -1.5"),
+    ("ah_a_p1_5", "AH Away +1.5"),
+    ("ahc_h_m1_5", "AH Corners Home -1.5"),
+    ("ahc_a_p1_5", "AH Corners Away +1.5"),
+    ("ahc_h_m2_5", "AH Corners Home -2.5"),
+    ("ahc_a_p2_5", "AH Corners Away +2.5"),
+    ("o15", "Over 1.5 Goals"),
+    ("o25", "Over 2.5 Goals"),
+    ("o35", "Over 3.5 Goals"),
+    ("u25", "Under 2.5 Goals"),
+    ("u35", "Under 3.5 Goals"),
+    ("btts_yes", "BTTS Yes"),
+    ("btts_no", "BTTS No"),
+    ("co85", "Over 8.5 Corners"),
+    ("co95", "Over 9.5 Corners"),
+    ("co105", "Over 10.5 Corners"),
+    ("cu95", "Under 9.5 Corners"),
+    ("cu105", "Under 10.5 Corners"),
+]
 
 
 def run_cmd(args: List[str]) -> tuple[int, str]:
@@ -75,6 +105,62 @@ def parse_scan_summary(output: str) -> Tuple[int, int]:
         lines = [ln for ln in report.splitlines() if " | " in ln and re.match(r"^\d{4}-\d{2}-\d{2}\s+\|", ln)]
         total = len(lines)
     return total, shortlist
+
+
+def parse_report_table(output: str, marker: str) -> List[Dict[str, str]]:
+    lines = output.splitlines()
+    marker_idx = -1
+    for i, ln in enumerate(lines):
+        if ln.strip().startswith(marker):
+            marker_idx = i
+            break
+    if marker_idx < 0:
+        return []
+
+    header_idx = -1
+    for i in range(marker_idx + 1, len(lines)):
+        if " | " in lines[i] and "Date" in lines[i] and "Market" in lines[i]:
+            header_idx = i
+            break
+    if header_idx < 0:
+        return []
+    headers = [h.strip() for h in lines[header_idx].split(" | ")]
+
+    rows: List[Dict[str, str]] = []
+    for i in range(header_idx + 1, len(lines)):
+        ln = lines[i]
+        if not ln.strip():
+            break
+        if ln.startswith("PARLAY SHORTLIST") or ln.startswith("Corner Predictions") or ln.startswith("SNIPER REPORT"):
+            break
+        if set(ln.strip()) == {"-"}:
+            continue
+        if " | " not in ln:
+            continue
+        parts = [p.strip() for p in ln.split(" | ")]
+        if len(parts) != len(headers):
+            continue
+        rows.append(dict(zip(headers, parts)))
+    return rows
+
+
+def rows_to_df(rows: List[Dict[str, str]], sort_col: str = "Edge"):
+    if not rows:
+        return None
+    if pd is None:
+        return rows
+    df = pd.DataFrame(rows)
+    if sort_col in df.columns:
+        cleaned = (
+            df[sort_col]
+            .astype(str)
+            .str.replace("%", "", regex=False)
+            .str.replace("+", "", regex=False)
+            .str.replace("$", "", regex=False)
+        )
+        df["_sort"] = pd.to_numeric(cleaned, errors="coerce")
+        df = df.sort_values("_sort", ascending=False).drop(columns=["_sort"])
+    return df
 
 
 def render_terminal_output(title: str, cmd: List[str], output: str, rc: int) -> None:
@@ -147,15 +233,51 @@ st.set_page_config(page_title="Soccer Bot Free", page_icon="⚽", layout="wide")
 app_css()
 ensure_bootstrap_files()
 
+if "preset" not in st.session_state:
+    st.session_state.preset = "Balanced"
+if "mode" not in st.session_state:
+    st.session_state.mode = "aggressive"
+if "min_edge" not in st.session_state:
+    st.session_state.min_edge = 8.0
+if "odds_min" not in st.session_state:
+    st.session_state.odds_min = 0.0
+if "odds_max" not in st.session_state:
+    st.session_state.odds_max = 0.0
+if "include_market_keys" not in st.session_state:
+    st.session_state.include_market_keys = []
+if "exclude_market_keys" not in st.session_state:
+    st.session_state.exclude_market_keys = []
+if "last_scan_output" not in st.session_state:
+    st.session_state.last_scan_output = ""
+if "last_scan_cmd" not in st.session_state:
+    st.session_state.last_scan_cmd = ""
+
 st.title("Soccer Bot Free")
 st.caption("Scanner + settlement control panel")
 
 with st.sidebar:
     st.subheader("Scan Settings")
+    preset = st.selectbox("Preset", ["Balanced", "Conservative", "Custom"], key="preset")
+    if st.button("Apply Preset", use_container_width=True):
+        if preset == "Balanced":
+            st.session_state.mode = "balanced"
+            st.session_state.min_edge = 6.0
+            st.session_state.odds_min = 1.8
+            st.session_state.odds_max = 2.8
+            st.session_state.include_market_keys = ["o25", "dnb", "home", "away", "btts_yes", "btts_no"]
+            st.session_state.exclude_market_keys = ["co105", "ahc_h_m2_5", "ahc_a_p2_5"]
+        elif preset == "Conservative":
+            st.session_state.mode = "safe"
+            st.session_state.min_edge = 8.0
+            st.session_state.odds_min = 1.6
+            st.session_state.odds_max = 2.4
+            st.session_state.include_market_keys = ["o15", "o25", "dnb", "adnb", "u35", "cu95", "cu105"]
+            st.session_state.exclude_market_keys = ["o35", "co105", "ahc_h_m2_5", "ahc_a_p2_5", "home", "away"]
+        st.rerun()
     season_code = st.text_input("Season Code", value="2526")
     scan_date = st.text_input("Scan Date", value="today", help="today, tomorrow, or YYYY-MM-DD")
-    mode = st.selectbox("Mode", ["safe", "balanced", "aggressive"], index=2)
-    min_edge = st.number_input("Min Edge %", value=8.0, step=0.1)
+    mode = st.selectbox("Mode", ["safe", "balanced", "aggressive"], key="mode")
+    min_edge = st.number_input("Min Edge %", step=0.1, key="min_edge")
     max_picks = st.number_input("Max Picks", min_value=0, value=10, step=1)
     one_pick_per_match = st.checkbox("One Pick Per Match", value=True)
     shortlist_market_cap = st.number_input("Shortlist Market Cap", min_value=0, value=3, step=1)
@@ -164,10 +286,22 @@ with st.sidebar:
     profile = st.selectbox("Profile", ["none", "pro_live"], index=0)
 
     with st.expander("Advanced Filters", expanded=False):
-        odds_min = st.number_input("Odds Min", min_value=0.0, value=0.0, step=0.1)
-        odds_max = st.number_input("Odds Max", min_value=0.0, value=0.0, step=0.1)
-        include_markets = st.text_input("Include Markets", value="", help="comma keys: o25,dnb,home,away")
-        exclude_markets = st.text_input("Exclude Markets", value="", help="comma keys: co105,ahc_h_m2_5")
+        odds_min = st.number_input("Odds Min", min_value=0.0, step=0.1, key="odds_min")
+        odds_max = st.number_input("Odds Max", min_value=0.0, step=0.1, key="odds_max")
+        include_market_keys = st.multiselect(
+            "Include Markets (optional)",
+            options=[k for k, _ in MARKET_CHOICES],
+            default=st.session_state.include_market_keys,
+            format_func=lambda x: f"{x} - {dict(MARKET_CHOICES).get(x, x)}",
+            key="include_market_keys",
+        )
+        exclude_market_keys = st.multiselect(
+            "Exclude Markets (optional)",
+            options=[k for k, _ in MARKET_CHOICES],
+            default=st.session_state.exclude_market_keys,
+            format_func=lambda x: f"{x} - {dict(MARKET_CHOICES).get(x, x)}",
+            key="exclude_market_keys",
+        )
         refresh_lookahead_days = st.number_input("Refresh Lookahead Days", min_value=0, value=7, step=1)
         auto_fill_margin = st.number_input("Auto-fill Margin %", value=-8.0, step=0.5)
 
@@ -190,8 +324,8 @@ scan_cfg = {
     "log_picks": log_picks,
     "odds_min": odds_min,
     "odds_max": odds_max,
-    "include_markets": include_markets,
-    "exclude_markets": exclude_markets,
+    "include_markets": ",".join(include_market_keys),
+    "exclude_markets": ",".join(exclude_market_keys),
     "profile": profile,
     "bankroll": bankroll,
 }
@@ -242,6 +376,8 @@ with tab_scan:
                 rc2, out2 = run_cmd(cmd_fill)
             if rc1 == 0 and rc2 == 0:
                 rc3, out3 = run_cmd(cmd_scan)
+                st.session_state.last_scan_output = out3
+                st.session_state.last_scan_cmd = " ".join(cmd_scan)
 
             st.code(
                 "\n\n".join(
@@ -264,6 +400,9 @@ with tab_scan:
         if st.button("Run Scan Only", use_container_width=True):
             cmd = build_scan_cmd(scan_cfg)
             rc, out = run_cmd(cmd)
+            if rc == 0:
+                st.session_state.last_scan_output = out
+                st.session_state.last_scan_cmd = " ".join(cmd)
             st.code(f"$ python {' '.join(cmd)}\n{out}", language="bash")
             if rc == 0:
                 picks, shortlist = parse_scan_summary(out)
@@ -271,6 +410,27 @@ with tab_scan:
                 st.info(f"Qualifying picks: {picks} | Shortlist: {shortlist}")
             else:
                 st.error("Scan failed")
+
+    if st.session_state.last_scan_output:
+        st.markdown("---")
+        st.subheader("Parsed Scan Tables")
+        all_rows = parse_report_table(st.session_state.last_scan_output, "SNIPER REPORT (VALUE FOUND)")
+        shortlist_rows = parse_report_table(st.session_state.last_scan_output, "PARLAY SHORTLIST")
+        c_a, c_b = st.columns(2)
+        c_a.metric("All Qualifying Picks", len(all_rows))
+        c_b.metric("Shortlist Picks", len(shortlist_rows))
+
+        if all_rows:
+            st.caption("SNIPER REPORT (sortable)")
+            st.dataframe(rows_to_df(all_rows, "Edge"), use_container_width=True, hide_index=True)
+        else:
+            st.info("No qualifying picks in the last scan output.")
+
+        if shortlist_rows:
+            st.caption("PARLAY SHORTLIST (sortable)")
+            st.dataframe(rows_to_df(shortlist_rows, "Edge"), use_container_width=True, hide_index=True)
+        else:
+            st.info("No shortlist found in the last scan output.")
 
 with tab_results:
     st.subheader("Settle and Evaluate")
