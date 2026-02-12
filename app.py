@@ -596,7 +596,7 @@ with st.sidebar:
     st.subheader("Scan Settings")
     preset = st.selectbox(
         "Preset",
-        ["DailyScan Morning (11 Feb style)", "Balanced", "Conservative", "Custom"],
+        ["DailyScan Morning (11 Feb style)", "O25 Robust 2425-2526", "Balanced", "Conservative", "Custom"],
         key="preset",
     )
     if st.button("Apply Preset", use_container_width=True):
@@ -612,6 +612,23 @@ with st.sidebar:
             st.session_state.one_pick_per_match = True
             st.session_state.shortlist_market_cap = 3
             st.session_state.max_picks = 10
+            st.session_state.scan_date_mode = "Today"
+            st.session_state.scan_date_custom = date.today()
+            st.session_state.log_picks = True
+            st.session_state.min_confidence = 0.0
+            st.session_state.max_confidence = 0.0
+        elif preset == "O25 Robust 2425-2526":
+            st.session_state.mode = "balanced"
+            st.session_state.min_edge = 3.0
+            st.session_state.odds_min = 2.0
+            st.session_state.odds_max = 2.6
+            st.session_state.include_market_keys = ["o25"]
+            st.session_state.exclude_market_keys = []
+            st.session_state.refresh_lookahead_days = 7
+            st.session_state.auto_fill_margin = -8.0
+            st.session_state.one_pick_per_match = True
+            st.session_state.shortlist_market_cap = 1
+            st.session_state.max_picks = 8
             st.session_state.scan_date_mode = "Today"
             st.session_state.scan_date_custom = date.today()
             st.session_state.log_picks = True
