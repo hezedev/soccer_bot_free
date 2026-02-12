@@ -340,6 +340,23 @@ def parse_grid_rows(output: str, min_bets: int) -> List[Dict[str, str]]:
     return rows
 
 
+def parse_single_backtest_metrics(output: str) -> Dict[str, float]:
+    # Parses: Bets: 98 | Wins: 49 | Hit rate: 50.0% | PnL (1u flat): -3.89u | ROI: -3.97%
+    m = re.search(
+        r"Bets:\s*(\d+)\s*\|\s*Wins:\s*(\d+)\s*\|\s*Hit rate:\s*([-\d.]+)%\s*\|\s*PnL.*?:\s*([-\d.]+)u\s*\|\s*ROI:\s*([-\d.]+)%",
+        output,
+    )
+    if not m:
+        return {"bets": 0.0, "wins": 0.0, "hit_rate": 0.0, "pnl": 0.0, "roi": -999.0}
+    return {
+        "bets": float(m.group(1)),
+        "wins": float(m.group(2)),
+        "hit_rate": float(m.group(3)),
+        "pnl": float(m.group(4)),
+        "roi": float(m.group(5)),
+    }
+
+
 def parse_report_table(output: str, marker: str) -> List[Dict[str, str]]:
     lines = output.splitlines()
     marker_idx = -1
@@ -552,6 +569,10 @@ if "bt_grid_min_bets" not in st.session_state:
     st.session_state.bt_grid_min_bets = 60
 if "bt_grid_top" not in st.session_state:
     st.session_state.bt_grid_top = 10
+if "bt_auto_tries" not in st.session_state:
+    st.session_state.bt_auto_tries = 40
+if "bt_auto_min_bets" not in st.session_state:
+    st.session_state.bt_auto_min_bets = 60
 
 st.title("Soccer Bot Free")
 st.caption("Scanner + settlement control panel")
@@ -1029,7 +1050,14 @@ with tab_backtest:
     with g5:
         bt_grid_top = st.number_input("Grid Top N", min_value=1, step=1, key="bt_grid_top")
 
-    rb1, rb2 = st.columns(2)
+    st.markdown("**Auto Random Search**")
+    a1, a2 = st.columns(2)
+    with a1:
+        bt_auto_tries = st.number_input("Max Random Tries", min_value=5, max_value=300, step=5, key="bt_auto_tries")
+    with a2:
+        bt_auto_min_bets = st.number_input("Auto Min Bets", min_value=10, max_value=500, step=10, key="bt_auto_min_bets")
+
+    rb1, rb2, rb3 = st.columns(3)
     with rb1:
         if st.button("Run Backtest", use_container_width=True, type="primary"):
             mkts = ",".join(bt_markets) if bt_markets else "o25"
@@ -1113,6 +1141,102 @@ with tab_backtest:
                     )
             else:
                 st.error("Grid search failed")
+
+    with rb3:
+        if st.button("Auto-Find Profitable", use_container_width=True):
+            market_pool = BACKTEST_MARKETS[:]
+            best_cfg: Dict[str, object] | None = None
+            best_roi = -999.0
+            target_bets = int(bt_auto_min_bets)
+            tries = int(bt_auto_tries)
+            progress = st.progress(0)
+            log_lines: List[str] = []
+            found = False
+            found_cfg: Dict[str, object] | None = None
+            for i in range(tries):
+                random.shuffle(market_pool)
+                take = random.randint(1, min(4, len(market_pool)))
+                mkts = market_pool[:take]
+                edge = random.choice([2.0, 3.0, 4.0, 5.0, 6.0, 7.0, 8.0, 9.0, 10.0])
+                tr = random.choice([0.65, 0.70, 0.75, 0.80])
+                o_min = random.choice([0.0, 1.4, 1.6, 1.8, 2.0])
+                o_max = random.choice([0.0, 2.2, 2.6, 3.2, 4.0])
+                if o_max != 0.0 and o_min > o_max:
+                    o_min = 0.0
+                ex_wd = random.choice(["", "tue,wed,thu", "mon,tue", ""])
+                season_list = [s.strip() for s in bt_season_codes.split(",") if s.strip()]
+                season_code = random.choice(season_list) if season_list else "2526"
+                cmd = [
+                    "backtest.py",
+                    "--season-code",
+                    season_code,
+                    "--train-ratio",
+                    str(tr),
+                    "--min-edge",
+                    str(edge),
+                    "--markets",
+                    ",".join(mkts),
+                    "--odds-min",
+                    str(o_min),
+                    "--odds-max",
+                    str(o_max),
+                ]
+                if ex_wd:
+                    cmd += ["--exclude-weekdays", ex_wd]
+
+                rc, out = run_cmd(cmd)
+                metrics = parse_single_backtest_metrics(out)
+                roi = float(metrics["roi"])
+                bets = int(metrics["bets"])
+                if roi > best_roi and bets >= target_bets:
+                    best_roi = roi
+                    best_cfg = {
+                        "season_code": season_code,
+                        "train_ratio": tr,
+                        "min_edge": edge,
+                        "markets": mkts,
+                        "odds_min": o_min,
+                        "odds_max": o_max,
+                        "exclude_weekdays": ex_wd,
+                        "bets": bets,
+                        "roi": roi,
+                    }
+                log_lines.append(
+                    f"try {i+1}/{tries} | season={season_code} mkts={','.join(mkts)} edge={edge:.1f} "
+                    f"odds=[{o_min:.1f},{o_max:.1f}] ex_wd={ex_wd or '-'} -> bets={bets} roi={roi:.2f}%"
+                )
+                progress.progress(min(100, int(((i + 1) / tries) * 100)))
+                if rc == 0 and bets >= target_bets and roi > 0.0:
+                    found = True
+                    found_cfg = {
+                        "season_code": season_code,
+                        "train_ratio": tr,
+                        "min_edge": edge,
+                        "markets": mkts,
+                        "odds_min": o_min,
+                        "odds_max": o_max,
+                        "exclude_weekdays": ex_wd,
+                        "bets": bets,
+                        "roi": roi,
+                    }
+                    break
+
+            st.code("\n".join(log_lines[-min(len(log_lines), 50) :]), language="text")
+            if found and found_cfg:
+                st.success(
+                    "Found profitable config: "
+                    f"ROI={found_cfg['roi']:.2f}% | bets={found_cfg['bets']} | "
+                    f"markets={','.join(found_cfg['markets'])}"
+                )
+                st.json(found_cfg)
+            else:
+                st.warning("No profitable config found in this random search window.")
+                if best_cfg:
+                    st.info(
+                        "Best non-profitable (or near) config found: "
+                        f"ROI={best_cfg['roi']:.2f}% | bets={best_cfg['bets']} | markets={','.join(best_cfg['markets'])}"
+                    )
+                    st.json(best_cfg)
 
 with tab_logs:
     st.subheader("Files and Help")
