@@ -46,7 +46,22 @@ MARKET_CHOICES: List[Tuple[str, str]] = [
     ("cu95", "Under 9.5 Corners"),
     ("cu105", "Under 10.5 Corners"),
 ]
-BACKTEST_MARKETS = [k for k, _ in MARKET_CHOICES]
+BACKTEST_MARKETS = [
+    "home",
+    "dnb",
+    "o15",
+    "o25",
+    "o35",
+    "u25",
+    "u35",
+    "btts_yes",
+    "btts_no",
+    "co85",
+    "co95",
+    "co105",
+    "cu95",
+    "cu105",
+]
 
 
 def to_float(raw: str, default: float = 0.0) -> float:
