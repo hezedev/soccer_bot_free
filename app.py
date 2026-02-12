@@ -394,6 +394,10 @@ def build_scan_cmd(cfg: Dict[str, object]) -> List[str]:
         cmd += ["--exclude-markets", str(cfg["exclude_markets"]).strip()]
     if cfg["profile"] != "none":
         cmd += ["--profile", str(cfg["profile"])]
+    if cfg["min_confidence"] > 0:
+        cmd += ["--min-confidence", str(cfg["min_confidence"])]
+    if cfg["max_confidence"] > 0:
+        cmd += ["--max-confidence", str(cfg["max_confidence"])]
     return cmd
 
 
@@ -467,6 +471,10 @@ if "last_scan_output" not in st.session_state:
     st.session_state.last_scan_output = ""
 if "last_scan_cmd" not in st.session_state:
     st.session_state.last_scan_cmd = ""
+if "min_confidence" not in st.session_state:
+    st.session_state.min_confidence = 0.0
+if "max_confidence" not in st.session_state:
+    st.session_state.max_confidence = 0.0
 
 st.title("Soccer Bot Free")
 st.caption("Scanner + settlement control panel")
@@ -494,6 +502,8 @@ with st.sidebar:
             st.session_state.scan_date_mode = "Today"
             st.session_state.scan_date_custom = date.today()
             st.session_state.log_picks = True
+            st.session_state.min_confidence = 0.0
+            st.session_state.max_confidence = 0.0
         elif preset == "Balanced":
             st.session_state.mode = "balanced"
             st.session_state.min_edge = 6.0
@@ -509,6 +519,8 @@ with st.sidebar:
             st.session_state.scan_date_mode = "Today"
             st.session_state.scan_date_custom = date.today()
             st.session_state.log_picks = True
+            st.session_state.min_confidence = 50.0
+            st.session_state.max_confidence = 0.0
         elif preset == "Conservative":
             st.session_state.mode = "safe"
             st.session_state.min_edge = 8.0
@@ -524,6 +536,8 @@ with st.sidebar:
             st.session_state.scan_date_mode = "Today"
             st.session_state.scan_date_custom = date.today()
             st.session_state.log_picks = True
+            st.session_state.min_confidence = 55.0
+            st.session_state.max_confidence = 0.0
         st.rerun()
     season_code = st.text_input("Season Code", value="2526")
     scan_date_mode = st.selectbox("Scan Date", ["Today", "Tomorrow", "Custom date"], key="scan_date_mode")
@@ -557,6 +571,15 @@ with st.sidebar:
         )
         refresh_lookahead_days = st.number_input("Refresh Lookahead Days", min_value=0, step=1, key="refresh_lookahead_days")
         auto_fill_margin = st.number_input("Auto-fill Margin %", step=0.5, key="auto_fill_margin")
+        min_confidence = st.number_input("Min Confidence %", min_value=0.0, max_value=100.0, step=1.0, key="min_confidence")
+        max_confidence = st.number_input(
+            "Max Confidence %",
+            min_value=0.0,
+            max_value=100.0,
+            step=1.0,
+            key="max_confidence",
+            help="0 disables upper cap",
+        )
 
 stats = bets_stats()
 odds_rows = odds_fixture_count()
@@ -581,6 +604,8 @@ scan_cfg = {
     "exclude_markets": ",".join(exclude_market_keys),
     "profile": profile,
     "bankroll": bankroll,
+    "min_confidence": min_confidence,
+    "max_confidence": max_confidence,
 }
 
 tab_scan, tab_results, tab_logs = st.tabs(["Scan", "Results", "Files"])

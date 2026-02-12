@@ -926,6 +926,8 @@ def run_scan(
     shortlist_market_cap: int,
     color_mode: str,
     log_picks: bool,
+    min_confidence: float,
+    max_confidence: float,
 ) -> int:
     default_min_edge, max_risk_pct, kelly_multiplier = mode_settings(mode)
     profile_cfg = profile_settings(profile)
@@ -1093,6 +1095,11 @@ def run_scan(
             edge = edge_pct(book, fair)
             if edge < effective_min_edge:
                 continue
+            confidence_pct = p * 100.0
+            if min_confidence > 0 and confidence_pct < min_confidence:
+                continue
+            if max_confidence > 0 and confidence_pct > max_confidence:
+                continue
             k = kelly_fraction(book, p)
             if flat_stake_pct > 0:
                 stake = bankroll * (flat_stake_pct / 100.0)
@@ -1101,7 +1108,6 @@ def run_scan(
             if stake <= 0:
                 continue
             fixture = f"{home} vs {away}"
-            confidence_pct = p * 100.0
             rows_for_sort.append(
                 (
                     edge,
@@ -1368,6 +1374,18 @@ def parse_args() -> argparse.Namespace:
         help="Path to bet log CSV (used by pro_live stop-loss and logging).",
     )
     parser.add_argument(
+        "--min-confidence",
+        type=float,
+        default=0.0,
+        help="Minimum confidence percent filter (0 disables).",
+    )
+    parser.add_argument(
+        "--max-confidence",
+        type=float,
+        default=0.0,
+        help="Maximum confidence percent filter (0 disables).",
+    )
+    parser.add_argument(
         "--log-picks",
         action="store_true",
         help="Log parlay shortlist picks to --bets-log-csv even without a profile.",
@@ -1462,6 +1480,8 @@ if __name__ == "__main__":
                 max(0, args.shortlist_market_cap),
                 args.color,
                 args.log_picks,
+                args.min_confidence,
+                args.max_confidence,
             )
             time.sleep(max(5, args.interval))
     raise SystemExit(
@@ -1486,5 +1506,7 @@ if __name__ == "__main__":
             max(0, args.shortlist_market_cap),
             args.color,
             args.log_picks,
+            args.min_confidence,
+            args.max_confidence,
         )
     )
