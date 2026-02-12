@@ -295,6 +295,51 @@ def parse_scan_summary(output: str) -> Tuple[int, int]:
     return total, shortlist
 
 
+def _parse_pct(raw: str) -> float:
+    try:
+        return float((raw or "").replace("%", "").replace("+", "").strip())
+    except (TypeError, ValueError):
+        return 0.0
+
+
+def parse_grid_rows(output: str, min_bets: int) -> List[Dict[str, str]]:
+    lines = output.splitlines()
+    header_idx = -1
+    headers: List[str] = []
+    for i, ln in enumerate(lines):
+        if "|" in ln and "min_edge" in ln and "odds_min" in ln and "odds_max" in ln:
+            header_idx = i
+            headers = [h.strip() for h in ln.split("|")]
+            break
+    if header_idx < 0:
+        return []
+
+    rows: List[Dict[str, str]] = []
+    for ln in lines[header_idx + 1 :]:
+        if not ln.strip():
+            continue
+        if set(ln.strip()) == {"-"}:
+            continue
+        if "|" not in ln:
+            # Stop once we leave the table body.
+            if rows:
+                break
+            continue
+        parts = [p.strip() for p in ln.split("|")]
+        if len(parts) != len(headers):
+            continue
+        row = dict(zip(headers, parts))
+        bets = int(float(row.get("bets", "0") or 0))
+        roi_key = "w_roi" if "w_roi" in row else ("roi" if "roi" in row else "")
+        min_roi_key = "min_roi" if "min_roi" in row else ""
+        roi_val = _parse_pct(row.get(roi_key, "0")) if roi_key else 0.0
+        min_roi_val = _parse_pct(row.get(min_roi_key, "0")) if min_roi_key else roi_val
+        candidate = (bets >= min_bets) and (roi_val > 0.0) and (min_roi_val > 0.0)
+        row["deploy_candidate"] = "YES" if candidate else "NO"
+        rows.append(row)
+    return rows
+
+
 def parse_report_table(output: str, marker: str) -> List[Dict[str, str]]:
     lines = output.splitlines()
     marker_idx = -1
@@ -1053,6 +1098,19 @@ with tab_backtest:
             st.code(f"$ python {' '.join(cmd)}\n{out}", language="bash")
             if rc == 0:
                 st.success("Grid search complete")
+                grid_rows = parse_grid_rows(out, int(bt_grid_min_bets))
+                if grid_rows:
+                    st.caption("Grid rows with deploy-candidate label")
+                    if pd is not None:
+                        dfg = pd.DataFrame(grid_rows)
+                        st.dataframe(dfg, use_container_width=True, hide_index=True)
+                    else:
+                        st.dataframe(grid_rows, use_container_width=True, hide_index=True)
+                    yes_count = sum(1 for r in grid_rows if r.get("deploy_candidate") == "YES")
+                    st.info(
+                        f"Deploy candidates: {yes_count}/{len(grid_rows)} "
+                        f"(rule: ROI > 0 and min bets >= {int(bt_grid_min_bets)})."
+                    )
             else:
                 st.error("Grid search failed")
 
