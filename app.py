@@ -45,6 +45,7 @@ MARKET_CHOICES: List[Tuple[str, str]] = [
     ("cu95", "Under 9.5 Corners"),
     ("cu105", "Under 10.5 Corners"),
 ]
+BACKTEST_MARKETS = [k for k, _ in MARKET_CHOICES]
 
 
 def to_float(raw: str, default: float = 0.0) -> float:
@@ -475,6 +476,16 @@ if "min_confidence" not in st.session_state:
     st.session_state.min_confidence = 0.0
 if "max_confidence" not in st.session_state:
     st.session_state.max_confidence = 0.0
+if "bt_markets" not in st.session_state:
+    st.session_state.bt_markets = ["o25"]
+if "bt_train_ratio" not in st.session_state:
+    st.session_state.bt_train_ratio = 0.70
+if "bt_min_edge" not in st.session_state:
+    st.session_state.bt_min_edge = 6.0
+if "bt_odds_min" not in st.session_state:
+    st.session_state.bt_odds_min = 0.0
+if "bt_odds_max" not in st.session_state:
+    st.session_state.bt_odds_max = 0.0
 
 st.title("Soccer Bot Free")
 st.caption("Scanner + settlement control panel")
@@ -608,7 +619,7 @@ scan_cfg = {
     "max_confidence": max_confidence,
 }
 
-tab_scan, tab_results, tab_logs = st.tabs(["Scan", "Results", "Files"])
+tab_scan, tab_results, tab_backtest, tab_logs = st.tabs(["Scan", "Results", "Backtest", "Files"])
 
 with tab_scan:
     st.subheader("Run Scanner")
@@ -862,6 +873,131 @@ with tab_results:
                     st.dataframe(dfl, use_container_width=True, hide_index=True)
                 else:
                     st.dataframe(parlay_leg_rows, use_container_width=True, hide_index=True)
+
+with tab_backtest:
+    st.subheader("Backtest Lab")
+    st.caption("Test settings on historical data before using them in live scans.")
+    st.info(
+        "How to use: 1) choose seasons + markets, 2) run single backtest, "
+        "3) run grid search to find stronger configs, 4) copy winning filters back to Scan."
+    )
+
+    b1, b2, b3, b4 = st.columns(4)
+    with b1:
+        bt_season_codes = st.text_input("Season Codes", value="2324,2425,2526", help="comma list for robust tests")
+    with b2:
+        bt_train_ratio = st.number_input("Train Ratio", min_value=0.5, max_value=0.9, step=0.01, key="bt_train_ratio")
+    with b3:
+        bt_min_edge = st.number_input("Min Edge %", min_value=0.0, max_value=50.0, step=0.5, key="bt_min_edge")
+    with b4:
+        bt_markets = st.multiselect(
+            "Markets",
+            options=BACKTEST_MARKETS,
+            default=st.session_state.bt_markets,
+            format_func=lambda x: f"{x} - {dict(MARKET_CHOICES).get(x, x)}",
+            key="bt_markets",
+        )
+
+    b5, b6, b7, b8 = st.columns(4)
+    with b5:
+        bt_odds_min = st.number_input("Odds Min", min_value=0.0, max_value=20.0, step=0.1, key="bt_odds_min")
+    with b6:
+        bt_odds_max = st.number_input("Odds Max", min_value=0.0, max_value=20.0, step=0.1, key="bt_odds_max")
+    with b7:
+        bt_include_weekdays = st.text_input("Include Weekdays", value="", help="ex: sat,sun")
+    with b8:
+        bt_exclude_weekdays = st.text_input("Exclude Weekdays", value="", help="ex: tue,wed,thu")
+
+    b9, b10 = st.columns(2)
+    with b9:
+        bt_include_leagues = st.text_input("Include Leagues", value="", help="comma league names")
+    with b10:
+        bt_exclude_leagues = st.text_input("Exclude Leagues", value="", help="comma league names")
+
+    st.markdown("**Grid Search Options**")
+    g1, g2, g3, g4, g5 = st.columns(5)
+    with g1:
+        bt_grid_min_edges = st.text_input("Grid Min Edges", value="3,5,7,9")
+    with g2:
+        bt_grid_odds_min = st.text_input("Grid Odds Min", value="1.6,1.8,2.0")
+    with g3:
+        bt_grid_odds_max = st.text_input("Grid Odds Max", value="2.2,2.6,3.2")
+    with g4:
+        bt_grid_min_bets = st.number_input("Grid Min Bets/Season", min_value=10, value=60, step=10)
+    with g5:
+        bt_grid_top = st.number_input("Grid Top N", min_value=1, value=10, step=1)
+
+    rb1, rb2 = st.columns(2)
+    with rb1:
+        if st.button("Run Backtest", use_container_width=True, type="primary"):
+            mkts = ",".join(bt_markets) if bt_markets else "o25"
+            cmd = [
+                "backtest.py",
+                "--season-codes",
+                bt_season_codes,
+                "--train-ratio",
+                str(bt_train_ratio),
+                "--min-edge",
+                str(bt_min_edge),
+                "--markets",
+                mkts,
+                "--odds-min",
+                str(bt_odds_min),
+                "--odds-max",
+                str(bt_odds_max),
+            ]
+            if bt_include_leagues.strip():
+                cmd += ["--include-leagues", bt_include_leagues.strip()]
+            if bt_exclude_leagues.strip():
+                cmd += ["--exclude-leagues", bt_exclude_leagues.strip()]
+            if bt_include_weekdays.strip():
+                cmd += ["--include-weekdays", bt_include_weekdays.strip()]
+            if bt_exclude_weekdays.strip():
+                cmd += ["--exclude-weekdays", bt_exclude_weekdays.strip()]
+            rc, out = run_cmd(cmd)
+            st.code(f"$ python {' '.join(cmd)}\n{out}", language="bash")
+            if rc == 0:
+                st.success("Backtest complete")
+            else:
+                st.error("Backtest failed")
+
+    with rb2:
+        if st.button("Run Grid Search", use_container_width=True):
+            mkts = ",".join(bt_markets) if bt_markets else "o25"
+            cmd = [
+                "backtest.py",
+                "--season-codes",
+                bt_season_codes,
+                "--train-ratio",
+                str(bt_train_ratio),
+                "--markets",
+                mkts,
+                "--grid-search",
+                "--grid-min-edges",
+                bt_grid_min_edges,
+                "--grid-odds-min",
+                bt_grid_odds_min,
+                "--grid-odds-max",
+                bt_grid_odds_max,
+                "--grid-min-bets-per-season",
+                str(bt_grid_min_bets),
+                "--grid-top",
+                str(bt_grid_top),
+            ]
+            if bt_include_leagues.strip():
+                cmd += ["--include-leagues", bt_include_leagues.strip()]
+            if bt_exclude_leagues.strip():
+                cmd += ["--exclude-leagues", bt_exclude_leagues.strip()]
+            if bt_include_weekdays.strip():
+                cmd += ["--include-weekdays", bt_include_weekdays.strip()]
+            if bt_exclude_weekdays.strip():
+                cmd += ["--exclude-weekdays", bt_exclude_weekdays.strip()]
+            rc, out = run_cmd(cmd)
+            st.code(f"$ python {' '.join(cmd)}\n{out}", language="bash")
+            if rc == 0:
+                st.success("Grid search complete")
+            else:
+                st.error("Grid search failed")
 
 with tab_logs:
     st.subheader("Files and Help")
