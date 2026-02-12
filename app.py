@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import csv
 import os
+import random
 import re
 import subprocess
 import sys
@@ -486,6 +487,26 @@ if "bt_odds_min" not in st.session_state:
     st.session_state.bt_odds_min = 0.0
 if "bt_odds_max" not in st.session_state:
     st.session_state.bt_odds_max = 0.0
+if "bt_season_codes" not in st.session_state:
+    st.session_state.bt_season_codes = "2324,2425,2526"
+if "bt_include_weekdays" not in st.session_state:
+    st.session_state.bt_include_weekdays = ""
+if "bt_exclude_weekdays" not in st.session_state:
+    st.session_state.bt_exclude_weekdays = ""
+if "bt_include_leagues" not in st.session_state:
+    st.session_state.bt_include_leagues = ""
+if "bt_exclude_leagues" not in st.session_state:
+    st.session_state.bt_exclude_leagues = ""
+if "bt_grid_min_edges" not in st.session_state:
+    st.session_state.bt_grid_min_edges = "3,5,7,9"
+if "bt_grid_odds_min" not in st.session_state:
+    st.session_state.bt_grid_odds_min = "1.6,1.8,2.0"
+if "bt_grid_odds_max" not in st.session_state:
+    st.session_state.bt_grid_odds_max = "2.2,2.6,3.2"
+if "bt_grid_min_bets" not in st.session_state:
+    st.session_state.bt_grid_min_bets = 60
+if "bt_grid_top" not in st.session_state:
+    st.session_state.bt_grid_top = 10
 
 st.title("Soccer Bot Free")
 st.caption("Scanner + settlement control panel")
@@ -881,10 +902,46 @@ with tab_backtest:
         "How to use: 1) choose seasons + markets, 2) run single backtest, "
         "3) run grid search to find stronger configs, 4) copy winning filters back to Scan."
     )
+    bs1, bs2 = st.columns(2)
+    with bs1:
+        if st.button("Apply Safe Baseline", use_container_width=True):
+            st.session_state.bt_season_codes = "2324,2425,2526"
+            st.session_state.bt_markets = ["o25"]
+            st.session_state.bt_train_ratio = 0.70
+            st.session_state.bt_min_edge = 3.0
+            st.session_state.bt_odds_min = 0.0
+            st.session_state.bt_odds_max = 0.0
+            st.session_state.bt_include_weekdays = ""
+            st.session_state.bt_exclude_weekdays = ""
+            st.session_state.bt_include_leagues = ""
+            st.session_state.bt_exclude_leagues = ""
+            st.rerun()
+    with bs2:
+        if st.button("Randomize Settings", use_container_width=True):
+            pool = BACKTEST_MARKETS[:]
+            random.shuffle(pool)
+            take = random.randint(1, min(5, len(pool)))
+            chosen = pool[:take]
+            min_options = [0.0, 1.4, 1.6, 1.8, 2.0]
+            max_options = [0.0, 2.2, 2.6, 3.2]
+            o_min = random.choice(min_options)
+            o_max = random.choice(max_options)
+            if o_max != 0.0 and o_min > o_max:
+                o_min, o_max = 0.0, o_max
+            st.session_state.bt_markets = chosen
+            st.session_state.bt_min_edge = random.choice([2.0, 3.0, 4.0, 5.0, 6.0, 7.0, 8.0])
+            st.session_state.bt_train_ratio = random.choice([0.65, 0.70, 0.75, 0.80])
+            st.session_state.bt_odds_min = o_min
+            st.session_state.bt_odds_max = o_max
+            st.session_state.bt_exclude_weekdays = random.choice(["", "tue,wed,thu", "mon,tue", ""])
+            st.session_state.bt_include_weekdays = ""
+            st.session_state.bt_include_leagues = ""
+            st.session_state.bt_exclude_leagues = ""
+            st.rerun()
 
     b1, b2, b3, b4 = st.columns(4)
     with b1:
-        bt_season_codes = st.text_input("Season Codes", value="2324,2425,2526", help="comma list for robust tests")
+        bt_season_codes = st.text_input("Season Codes", key="bt_season_codes", help="comma list for robust tests")
     with b2:
         bt_train_ratio = st.number_input("Train Ratio", min_value=0.5, max_value=0.9, step=0.01, key="bt_train_ratio")
     with b3:
@@ -904,28 +961,28 @@ with tab_backtest:
     with b6:
         bt_odds_max = st.number_input("Odds Max", min_value=0.0, max_value=20.0, step=0.1, key="bt_odds_max")
     with b7:
-        bt_include_weekdays = st.text_input("Include Weekdays", value="", help="ex: sat,sun")
+        bt_include_weekdays = st.text_input("Include Weekdays", key="bt_include_weekdays", help="ex: sat,sun")
     with b8:
-        bt_exclude_weekdays = st.text_input("Exclude Weekdays", value="", help="ex: tue,wed,thu")
+        bt_exclude_weekdays = st.text_input("Exclude Weekdays", key="bt_exclude_weekdays", help="ex: tue,wed,thu")
 
     b9, b10 = st.columns(2)
     with b9:
-        bt_include_leagues = st.text_input("Include Leagues", value="", help="comma league names")
+        bt_include_leagues = st.text_input("Include Leagues", key="bt_include_leagues", help="comma league names")
     with b10:
-        bt_exclude_leagues = st.text_input("Exclude Leagues", value="", help="comma league names")
+        bt_exclude_leagues = st.text_input("Exclude Leagues", key="bt_exclude_leagues", help="comma league names")
 
     st.markdown("**Grid Search Options**")
     g1, g2, g3, g4, g5 = st.columns(5)
     with g1:
-        bt_grid_min_edges = st.text_input("Grid Min Edges", value="3,5,7,9")
+        bt_grid_min_edges = st.text_input("Grid Min Edges", key="bt_grid_min_edges")
     with g2:
-        bt_grid_odds_min = st.text_input("Grid Odds Min", value="1.6,1.8,2.0")
+        bt_grid_odds_min = st.text_input("Grid Odds Min", key="bt_grid_odds_min")
     with g3:
-        bt_grid_odds_max = st.text_input("Grid Odds Max", value="2.2,2.6,3.2")
+        bt_grid_odds_max = st.text_input("Grid Odds Max", key="bt_grid_odds_max")
     with g4:
-        bt_grid_min_bets = st.number_input("Grid Min Bets/Season", min_value=10, value=60, step=10)
+        bt_grid_min_bets = st.number_input("Grid Min Bets/Season", min_value=10, step=10, key="bt_grid_min_bets")
     with g5:
-        bt_grid_top = st.number_input("Grid Top N", min_value=1, value=10, step=1)
+        bt_grid_top = st.number_input("Grid Top N", min_value=1, step=1, key="bt_grid_top")
 
     rb1, rb2 = st.columns(2)
     with rb1:
