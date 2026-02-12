@@ -48,7 +48,9 @@ MARKET_CHOICES: List[Tuple[str, str]] = [
 ]
 BACKTEST_MARKETS = [
     "home",
+    "away",
     "dnb",
+    "adnb",
     "o15",
     "o25",
     "o35",

@@ -16,7 +16,9 @@ from model import SimpleBettingModel, over_probability, poisson_pmf
 
 MARKET_KEYS = [
     "home",
+    "away",
     "dnb",
+    "adnb",
     "o15",
     "o25",
     "o35",
@@ -83,6 +85,14 @@ def win_home(row: dict) -> bool:
     return _to_float(row.get("FTHG"), -1) > _to_float(row.get("FTAG"), -1)
 
 
+def win_away(row: dict) -> bool:
+    return _to_float(row.get("FTAG"), -1) > _to_float(row.get("FTHG"), -1)
+
+
+def is_draw(row: dict) -> bool:
+    return _to_float(row.get("FTHG"), -1) == _to_float(row.get("FTAG"), -1)
+
+
 def win_over25(row: dict) -> bool:
     return (_to_float(row.get("FTHG"), 0) + _to_float(row.get("FTAG"), 0)) > 2.5
 
@@ -147,6 +157,12 @@ def home_dnb_probability(home_lam: float, away_lam: float) -> float:
     return max(0.0, min(1.0, p_home / active))
 
 
+def away_dnb_probability(home_lam: float, away_lam: float) -> float:
+    _, p_draw, p_away = match_outcome_probs(home_lam, away_lam)
+    active = max(1e-9, 1.0 - p_draw)
+    return max(0.0, min(1.0, p_away / active))
+
+
 def expand_markets(markets: List[str]) -> List[str]:
     out: List[str] = []
     for m in markets:
@@ -157,7 +173,9 @@ def expand_markets(markets: List[str]) -> List[str]:
             out.extend(
                 [
                     "home",
+                    "away",
                     "dnb",
+                    "adnb",
                     "o15",
                     "o25",
                     "o35",
@@ -288,7 +306,7 @@ def evaluate_backtest(
     model = SimpleBettingModel()
     model.fit(train)
 
-    # market_name, bookmaker columns, win_fn, probability_fn
+    # market_name, bookmaker columns, win_fn, probability_fn, push_fn
     defs = []
     if "home" in markets:
         defs.append(
@@ -297,6 +315,17 @@ def evaluate_backtest(
                 ["B365H", "PSH", "WHH", "AvgH", "MaxH"],
                 win_home,
                 lambda p: p["home_win_prob"],
+                None,
+            )
+        )
+    if "away" in markets:
+        defs.append(
+            (
+                "AwayWin",
+                ["B365A", "PSA", "WHA", "AvgA", "MaxA"],
+                win_away,
+                lambda p: p["away_win_prob"],
+                None,
             )
         )
     if "dnb" in markets:
@@ -306,6 +335,17 @@ def evaluate_backtest(
                 ["B365DNBH", "PSDNBH", "AvgDNBH", "MaxDNBH"],
                 win_home,
                 lambda p: p["home_dnb_prob"],
+                is_draw,
+            )
+        )
+    if "adnb" in markets:
+        defs.append(
+            (
+                "AwayDNB",
+                ["B365DNBA", "PSDNBA", "AvgDNBA", "MaxDNBA"],
+                win_away,
+                lambda p: p["away_dnb_prob"],
+                is_draw,
             )
         )
     if "o15" in markets:
@@ -315,6 +355,7 @@ def evaluate_backtest(
                 ["B365>1.5", "P>1.5", "Avg>1.5", "Max>1.5"],
                 lambda r: total_goals(r) > 1.5,
                 lambda p: p["over15_prob"],
+                None,
             )
         )
     if "o25" in markets:
@@ -324,6 +365,7 @@ def evaluate_backtest(
                 ["B365>2.5", "P>2.5", "Avg>2.5", "Max>2.5"],
                 win_over25,
                 lambda p: p["over25_prob"],
+                None,
             )
         )
     if "o35" in markets:
@@ -333,6 +375,7 @@ def evaluate_backtest(
                 ["B365>3.5", "P>3.5", "Avg>3.5", "Max>3.5"],
                 lambda r: total_goals(r) > 3.5,
                 lambda p: p["over35_prob"],
+                None,
             )
         )
     if "u25" in markets:
@@ -342,6 +385,7 @@ def evaluate_backtest(
                 ["B365<2.5", "P<2.5", "Avg<2.5", "Max<2.5"],
                 lambda r: total_goals(r) < 2.5,
                 lambda p: p["under25_prob"],
+                None,
             )
         )
     if "u35" in markets:
@@ -351,6 +395,7 @@ def evaluate_backtest(
                 ["B365<3.5", "P<3.5", "Avg<3.5", "Max<3.5"],
                 lambda r: total_goals(r) < 3.5,
                 lambda p: p["under35_prob"],
+                None,
             )
         )
     if "btts_yes" in markets:
@@ -360,6 +405,7 @@ def evaluate_backtest(
                 ["B365BTS", "PSBTS", "AvgBTS", "MaxBTS"],
                 btts_yes,
                 lambda p: p["btts_yes_prob"],
+                None,
             )
         )
     if "btts_no" in markets:
@@ -369,6 +415,7 @@ def evaluate_backtest(
                 ["B365BTNS", "PSBTNS", "AvgBTNS", "MaxBTNS"],
                 lambda r: not btts_yes(r),
                 lambda p: p["btts_no_prob"],
+                None,
             )
         )
     if "co85" in markets:
@@ -378,6 +425,7 @@ def evaluate_backtest(
                 ["B365C>8.5", "PSC>8.5", "AvgC>8.5", "MaxC>8.5"],
                 lambda r: total_corners(r) > 8.5,
                 lambda p: p["co85_prob"],
+                None,
             )
         )
     if "co95" in markets:
@@ -387,6 +435,7 @@ def evaluate_backtest(
                 ["B365C>9.5", "PSC>9.5", "AvgC>9.5", "MaxC>9.5"],
                 lambda r: total_corners(r) > 9.5,
                 lambda p: p["co95_prob"],
+                None,
             )
         )
     if "co105" in markets:
@@ -396,6 +445,7 @@ def evaluate_backtest(
                 ["B365C>10.5", "PSC>10.5", "AvgC>10.5", "MaxC>10.5"],
                 lambda r: total_corners(r) > 10.5,
                 lambda p: p["co105_prob"],
+                None,
             )
         )
     if "cu95" in markets:
@@ -405,6 +455,7 @@ def evaluate_backtest(
                 ["B365C<9.5", "PSC<9.5", "AvgC<9.5", "MaxC<9.5"],
                 lambda r: total_corners(r) < 9.5,
                 lambda p: p["cu95_prob"],
+                None,
             )
         )
     if "cu105" in markets:
@@ -414,6 +465,7 @@ def evaluate_backtest(
                 ["B365C<10.5", "PSC<10.5", "AvgC<10.5", "MaxC<10.5"],
                 lambda r: total_corners(r) < 10.5,
                 lambda p: p["cu105_prob"],
+                None,
             )
         )
 
@@ -440,9 +492,12 @@ def evaluate_backtest(
         pred = model.predict(pred_league, r["HomeTeam"], r["AwayTeam"])
         total_goal_lam = pred["home_goal_lambda"] + pred["away_goal_lambda"]
         total_corner_lam = pred["home_corner_lambda"] + pred["away_corner_lambda"]
+        p_home_win, p_draw, p_away_win = match_outcome_probs(pred["home_goal_lambda"], pred["away_goal_lambda"])
         probs = {
-            "home_win_prob": home_win_probability(pred["home_goal_lambda"], pred["away_goal_lambda"]),
-            "home_dnb_prob": home_dnb_probability(pred["home_goal_lambda"], pred["away_goal_lambda"]),
+            "home_win_prob": p_home_win,
+            "away_win_prob": p_away_win,
+            "home_dnb_prob": max(0.0, min(1.0, p_home_win / max(1e-9, 1.0 - p_draw))),
+            "away_dnb_prob": max(0.0, min(1.0, p_away_win / max(1e-9, 1.0 - p_draw))),
             "over15_prob": over_probability(1.5, total_goal_lam),
             "over25_prob": over_probability(2.5, total_goal_lam),
             "over35_prob": over_probability(3.5, total_goal_lam),
@@ -457,7 +512,7 @@ def evaluate_backtest(
             "cu105_prob": under_probability(10.5, total_corner_lam),
         }
 
-        for market_name, odd_cols, win_fn, prob_fn in defs:
+        for market_name, odd_cols, win_fn, prob_fn, push_fn in defs:
             book = _first_odds(r, odd_cols)
             if book <= 1.01:
                 continue
@@ -472,7 +527,11 @@ def evaluate_backtest(
                 continue
 
             won = win_fn(r)
-            unit_pnl = (book - 1.0) if won else -1.0
+            pushed = push_fn(r) if push_fn else False
+            if pushed:
+                unit_pnl = 0.0
+            else:
+                unit_pnl = (book - 1.0) if won else -1.0
             bets += 1
             wins += 1 if won else 0
             pnl += unit_pnl
@@ -859,7 +918,7 @@ def parse_args() -> argparse.Namespace:
     p.add_argument(
         "--markets",
         default="all",
-        help="comma list: all,home,dnb,o15,o25,o35,u25,u35,btts_yes,btts_no,co85,co95,co105,cu95,cu105",
+        help="comma list: all,home,away,dnb,adnb,o15,o25,o35,u25,u35,btts_yes,btts_no,co85,co95,co105,cu95,cu105",
     )
     p.add_argument("--odds-min", type=float, default=0.0, help="minimum bookmaker odds filter")
     p.add_argument("--odds-max", type=float, default=0.0, help="maximum bookmaker odds filter (0 disables)")
