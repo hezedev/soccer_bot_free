@@ -64,6 +64,46 @@ BACKTEST_MARKETS = [
     "cu95",
     "cu105",
 ]
+WEEKDAY_CHOICES: List[Tuple[str, str]] = [
+    ("mon", "Monday"),
+    ("tue", "Tuesday"),
+    ("wed", "Wednesday"),
+    ("thu", "Thursday"),
+    ("fri", "Friday"),
+    ("sat", "Saturday"),
+    ("sun", "Sunday"),
+]
+
+
+def configured_app_passcode() -> str:
+    try:
+        val = (st.secrets.get("APP_PASSCODE", "") or "").strip()
+        if val:
+            return val
+    except Exception:
+        pass
+    return (os.getenv("APP_PASSCODE", "") or "").strip()
+
+
+def require_access_gate() -> bool:
+    expected = configured_app_passcode()
+    if not expected:
+        return True
+    if st.session_state.get("access_granted"):
+        return True
+
+    st.title("Soccer Bot Free")
+    st.subheader("Access Required")
+    entered = st.text_input("Passcode", type="password", key="access_passcode_input")
+    if st.button("Unlock", type="primary", use_container_width=True):
+        if entered == expected:
+            st.session_state.access_granted = True
+            st.success("Access granted.")
+            st.rerun()
+        else:
+            st.error("Invalid passcode.")
+    st.info("Ask the app owner for the passcode.")
+    return False
 
 
 def to_float(raw: str, default: float = 0.0) -> float:
@@ -479,6 +519,10 @@ def build_scan_cmd(cfg: Dict[str, object]) -> List[str]:
         cmd += ["--min-confidence", str(cfg["min_confidence"])]
     if cfg["max_confidence"] > 0:
         cmd += ["--max-confidence", str(cfg["max_confidence"])]
+    if str(cfg["scan_include_weekdays"]).strip():
+        cmd += ["--include-weekdays", str(cfg["scan_include_weekdays"]).strip()]
+    if str(cfg["scan_exclude_weekdays"]).strip():
+        cmd += ["--exclude-weekdays", str(cfg["scan_exclude_weekdays"]).strip()]
     return cmd
 
 
@@ -501,6 +545,8 @@ def app_css() -> None:
 
 
 st.set_page_config(page_title="Soccer Bot Free", page_icon="⚽", layout="wide")
+if not require_access_gate():
+    st.stop()
 app_css()
 ensure_bootstrap_files()
 
@@ -556,6 +602,10 @@ if "min_confidence" not in st.session_state:
     st.session_state.min_confidence = 0.0
 if "max_confidence" not in st.session_state:
     st.session_state.max_confidence = 0.0
+if "scan_include_weekdays" not in st.session_state:
+    st.session_state.scan_include_weekdays = []
+if "scan_exclude_weekdays" not in st.session_state:
+    st.session_state.scan_exclude_weekdays = []
 if "bt_markets" not in st.session_state:
     st.session_state.bt_markets = ["o25"]
 if "bt_train_ratio" not in st.session_state:
@@ -595,6 +645,10 @@ st.title("Soccer Bot Free")
 st.caption("Scanner + settlement control panel")
 
 with st.sidebar:
+    if configured_app_passcode() and st.session_state.get("access_granted"):
+        if st.button("Lock App", use_container_width=True):
+            st.session_state.access_granted = False
+            st.rerun()
     st.subheader("Scan Settings")
     preset = st.selectbox(
         "Preset",
@@ -619,6 +673,8 @@ with st.sidebar:
             st.session_state.log_picks = True
             st.session_state.min_confidence = 0.0
             st.session_state.max_confidence = 0.0
+            st.session_state.scan_include_weekdays = []
+            st.session_state.scan_exclude_weekdays = []
         elif preset == "O25 Robust 2425-2526":
             st.session_state.mode = "balanced"
             st.session_state.min_edge = 3.0
@@ -636,6 +692,8 @@ with st.sidebar:
             st.session_state.log_picks = True
             st.session_state.min_confidence = 0.0
             st.session_state.max_confidence = 0.0
+            st.session_state.scan_include_weekdays = []
+            st.session_state.scan_exclude_weekdays = ["tue", "wed", "thu"]
         elif preset == "Balanced":
             st.session_state.mode = "balanced"
             st.session_state.min_edge = 6.0
@@ -653,6 +711,8 @@ with st.sidebar:
             st.session_state.log_picks = True
             st.session_state.min_confidence = 50.0
             st.session_state.max_confidence = 0.0
+            st.session_state.scan_include_weekdays = []
+            st.session_state.scan_exclude_weekdays = []
         elif preset == "Conservative":
             st.session_state.mode = "safe"
             st.session_state.min_edge = 8.0
@@ -670,6 +730,8 @@ with st.sidebar:
             st.session_state.log_picks = True
             st.session_state.min_confidence = 55.0
             st.session_state.max_confidence = 0.0
+            st.session_state.scan_include_weekdays = []
+            st.session_state.scan_exclude_weekdays = []
         st.rerun()
     season_code = st.text_input("Season Code", value="2526")
     scan_date_mode = st.selectbox("Scan Date", ["Today", "Tomorrow", "Custom date"], key="scan_date_mode")
@@ -712,6 +774,20 @@ with st.sidebar:
             key="max_confidence",
             help="0 disables upper cap",
         )
+        scan_include_weekdays = st.multiselect(
+            "Include Weekdays (optional)",
+            options=[k for k, _ in WEEKDAY_CHOICES],
+            default=st.session_state.scan_include_weekdays,
+            format_func=lambda x: f"{x} - {dict(WEEKDAY_CHOICES).get(x, x)}",
+            key="scan_include_weekdays",
+        )
+        scan_exclude_weekdays = st.multiselect(
+            "Exclude Weekdays (optional)",
+            options=[k for k, _ in WEEKDAY_CHOICES],
+            default=st.session_state.scan_exclude_weekdays,
+            format_func=lambda x: f"{x} - {dict(WEEKDAY_CHOICES).get(x, x)}",
+            key="scan_exclude_weekdays",
+        )
 
 stats = bets_stats()
 odds_rows = odds_fixture_count()
@@ -738,6 +814,8 @@ scan_cfg = {
     "bankroll": bankroll,
     "min_confidence": min_confidence,
     "max_confidence": max_confidence,
+    "scan_include_weekdays": ",".join(scan_include_weekdays),
+    "scan_exclude_weekdays": ",".join(scan_exclude_weekdays),
 }
 
 tab_scan, tab_results, tab_backtest, tab_logs = st.tabs(["Scan", "Results", "Backtest", "Files"])
@@ -763,6 +841,10 @@ with tab_scan:
                 "--date",
                 scan_date,
             ]
+            if scan_cfg["scan_include_weekdays"].strip():
+                cmd_refresh += ["--include-weekdays", scan_cfg["scan_include_weekdays"]]
+            if scan_cfg["scan_exclude_weekdays"].strip():
+                cmd_refresh += ["--exclude-weekdays", scan_cfg["scan_exclude_weekdays"]]
             cmd_fill = [
                 "main.py",
                 "--color",
@@ -778,6 +860,10 @@ with tab_scan:
                 str(auto_fill_margin),
                 "--auto-fill-overwrite",
             ]
+            if scan_cfg["scan_include_weekdays"].strip():
+                cmd_fill += ["--include-weekdays", scan_cfg["scan_include_weekdays"]]
+            if scan_cfg["scan_exclude_weekdays"].strip():
+                cmd_fill += ["--exclude-weekdays", scan_cfg["scan_exclude_weekdays"]]
             cmd_scan = build_scan_cmd(scan_cfg)
             rc1, out1 = run_cmd(cmd_refresh)
             rc2, out2 = (1, "")
